@@ -1,0 +1,38 @@
+//
+// open horizon -- undefined_darkness@outlook.com
+//
+
+#pragma once
+
+#include "deathmatch.h"
+
+namespace game
+{
+//------------------------------------------------------------
+
+class team_deathmatch: public deathmatch
+{
+public:
+    virtual void start(const char *plane, int color, int special, const char *location, int bots_count) override;
+    virtual void update(int dt, const plane_controls &player_controls) override;
+    virtual void end() override;
+
+    team_deathmatch(world &w): deathmatch(w) {}
+
+protected:
+    bool is_ally(const plane_ptr &a, const plane_ptr &b);
+    void on_kill(const object_ptr &k, const object_ptr &v);
+    virtual void respawn(plane_ptr p) override;
+    virtual void update_scores() override;
+    void rebalance();
+
+    respawn_point get_respawn_point(std::string team);
+
+    std::vector<respawn_point> m_respawn_points[2];
+    ivalue m_last_respawn[2];
+    ivalue m_score[2];
+    int m_last_planes_count = 0;
+};
+
+//------------------------------------------------------------
+}

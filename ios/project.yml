@@ -1,0 +1,160 @@
+name: OpenHorizon
+options:
+  bundleIdPrefix: dan.openhorizon
+  deploymentTarget:
+    iOS: "15.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    DEVELOPMENT_TEAM: EA34W5QFTF
+    CODE_SIGN_STYLE: Automatic
+    TARGETED_DEVICE_FAMILY: "1,2"
+    #openh264/smb/http extension: excluded below
+    GCC_C_LANGUAGE_STANDARD: c11
+    GCC_TREAT_WARNINGS_AS_ERRORS: "NO"
+    GCC_WARN_64_TO_32_BIT_CONVERSION: "NO"
+    CLANG_ENABLE_MODULES: "NO"
+    OTHER_LDFLAGS: "$(inherited)"
+
+targets:
+  OpenHorizon:
+    type: application
+    platform: iOS
+    sources:
+      #game sources (platform_ios replaces platform.cpp; no GLFW on iOS)
+      - path: ../demo/demo.cpp
+      - path: ../game
+        excludes:
+          - network_client.cpp
+          - network_client.h
+          - network_server.cpp
+          - network_server.h
+          - network.cpp
+          - network.h
+          - network_data.h
+          - network_helpers.h
+      - path: ../game/network_ios_stub.cpp
+      - path: ../gui
+      - path: ../phys
+      - path: ../renderer
+      - path: ../sound
+      - path: ../util
+        excludes:
+          - platform.cpp
+          - platform_dialogs.cpp
+      #MFi gamepad support (GameController framework, ObjC++)
+      - path: gamepad_ios.mm
+      - path: ../containers
+      - path: ../deps/pugixml-1.4/src
+      - path: ../deps/miso/src
+        excludes:
+          - app_protocol_simple.cpp
+          - server_udp.cpp
+      - path: ../deps/nya-engine/formats
+      - path: ../deps/nya-engine/log
+      - path: ../deps/nya-engine/math
+      - path: ../deps/nya-engine/memory
+      - path: ../deps/nya-engine/resources
+        excludes:
+          - apk_resources_provider.cpp
+          - apk_resources_provider.h
+      - path: ../deps/nya-engine/scene
+      - path: ../deps/nya-engine/ui
+      - path: ../deps/nya-engine/system
+        excludes:
+          #GLFW/X11/D3D window backends; app.mm is the iOS backend
+          - app.cpp
+          #android java stub, must not end up in the bundle
+          - nya
+      - path: ../deps/nya-engine/render
+        excludes:
+          - render_metal.cpp
+          - render_directx10.cpp
+          - render_directx12.cpp
+          - dxutils.cpp
+      #render_metal compiled as ObjC++ (uses MTLDevice etc.); app.mm calls
+      #render_metal::start_frame/end_frame on the Metal code path
+      - path: ios_render_metal.mm
+      - path: ../deps/nya-engine/extensions
+        excludes:
+          - nya_main.cpp #defines main() - demo.cpp has the real one
+          - openh264.cpp
+          - openh264.h
+          - smb_resources_provider.cpp
+          - smb_resources_provider.h
+          - ftp_resources_provider.cpp
+          - ftp_resources_provider.h
+          - system_openvr.cpp
+          - system_openvr.h
+          - texture_il.cpp
+          - texture_il.h
+          - texture_libjpeg.cpp
+          - texture_libjpeg.h
+          - texture_libpng.cpp
+          - texture_libpng.h
+      #app resources (shaders/, aircrafts.xml, menu.lua, ...) are merged into
+      #pack/ (see ios/pack): the game resolves them via the pack provider,
+      #so nothing else is copied into the bundle root
+      - path: pack
+        type: folder
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dan.openhorizon.game
+        PRODUCT_NAME: OpenHorizon
+        INFOPLIST_FILE: Info.plist
+        GENERATE_INFOPLIST_FILE: "NO"
+        #iOS app entry: normal main() in demo.cpp (app.mm calls UIApplicationMain from it)
+        GCC_PRECOMPILE_PREFIX_HEADER: "NO"
+        HEADER_SEARCH_PATHS: >-
+          $(inherited)
+          ..
+          ../deps/nya-engine
+          ../deps/pugixml-1.4/src
+          ../deps/miso/include
+          ../deps/glfw-bin/include
+          ../deps/lua-5.2.4/include
+          ../deps/astcenc
+          $(SRCROOT)/build/openal_include
+        #OH_ENABLE_ASTC_CPU_DECODE: simulator ES2 has no ASTC hardware support;
+        #decode the pack's ASTC DDS textures on CPU (astcenc neon arm64 libs, linked below)
+        OTHER_CFLAGS: "$(inherited) -DOH_PLATFORM_IOS -DOH_ENABLE_ASTC_CPU_DECODE -Wno-multichar"
+        OTHER_CPLUSPLUSFLAGS: "$(inherited) -DOH_PLATFORM_IOS -DOH_ENABLE_ASTC_CPU_DECODE -std=c++0x -Wno-multichar"
+        LIBRARY_SEARCH_PATHS: "$(inherited) $(SRCROOT)/build $(SRCROOT)"
+        #C++ exceptions: engine code uses none, iOS default is off; keep off
+        CLANG_CXX_LIBRARY: "libc++"
+        CLANG_CXX_LANGUAGE_STANDARD: "c++0x"
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/Frameworks"
+        DEFINES_MODULE: "NO"
+        ENABLE_BITCODE: "NO"
+        DEAD_CODE_STRIPPING: "YES"
+        OTHER_LDFLAGS: >-
+          $(inherited)
+          $(SRCROOT)/build/liblua52-ios.a
+          $(PROJECT_DIR)/../deps/astcenc/libastcenc-ios-device.a
+          -lz
+          -weak_framework OpenAL
+          -weak-lSystem
+          -framework OpenGLES
+          -framework Metal
+          -framework UIKit
+          -framework Foundation
+          -framework QuartzCore
+          -framework GameController
+        #lua slices are platform-specific (same arm64 arch, different platform):
+        #device links liblua52-ios.a, simulator links liblua52-sim.a
+        #(build_lua.sh produces both) - full replacement, no $(inherited)
+        OTHER_LDFLAGS[sdk=iphonesimulator*]: >-
+          $(SRCROOT)/build/liblua52-sim.a
+          $(PROJECT_DIR)/../deps/astcenc/libastcenc-ios-sim.a
+          -lz
+          -weak_framework OpenAL
+          -weak-lSystem
+          -framework OpenGLES
+          -framework Metal
+          -framework UIKit
+          -framework Foundation
+          -framework QuartzCore
+          -framework GameController

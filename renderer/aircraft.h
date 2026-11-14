@@ -1,0 +1,215 @@
+//
+// open horizon -- undefined_darkness@outlook.com
+//
+
+#pragma once
+
+#include "phys/plane_params.h"
+#include "model.h"
+#include "location_params.h"
+#include "particles.h"
+#include "netimg.h"
+
+namespace renderer
+{
+//------------------------------------------------------------
+
+class scene;
+
+class aircraft
+{
+public:
+    bool load(const char *name, bool hd);
+    bool set_decal(unsigned int color_idx, bool hd);
+
+    struct net_decal
+    {
+        unsigned char colors[6][3];
+        unsigned short coledit_idx = 0;
+        unsigned int decal_crc32 = 0;
+        unsigned int spec_crc32 = 0;
+        netimg<128> diffuse;
+        netimg<64> specular;
+
+        net_decal() { memset(colors, 0, sizeof(colors)); }
+    };
+    bool set_decal(const net_decal &decal);
+
+    void load_missile(const char *name, const location_params &params);
+    void load_special(const char *name, const location_params &params);
+    void apply_location(const nya_scene::texture &ibl, const nya_scene::texture &env, const location_params &params);
+
+    void draw(int lod_idx);
+    void draw_player();
+    void draw_cockpit();
+    void draw_player_shadowcaster();
+    void draw_trails(const scene &s);
+    void draw_fire_trail(const scene &s);
+    void draw_mgun_flash(const scene &s);
+    void draw_engine_effect(const scene &s);
+    void draw_engine_heat_effect(const scene &s);
+    int get_lods_count() const { return m_mesh.get_lods_count(); }
+    void update(int dt);
+    void update_trail(int dt, scene &s);
+    void setup_shadows(const nya_scene::texture &tex, const nya_math::mat4 &m);
+    void set_hide(bool value) { m_hide = value; }
+    bool is_visible() const { return !m_hide; }
+
+    void set_pos(const nya_math::vec3 &pos) { m_mesh.set_pos(pos); }
+    void set_rot(const nya_math::quat &rot) { m_mesh.set_rot(rot); }
+    void set_vel(const nya_math::vec3 &vel) { m_vel = vel; }
+    const nya_math::vec3 &get_pos() { return m_mesh.get_pos(); }
+    const nya_math::vec3 &get_vel() { return m_vel; }
+    nya_math::quat get_rot() { return m_mesh.get_rot(); }
+    nya_math::vec3 get_bone_pos(const char *name);
+    nya_math::vec3 get_wing_offset();
+    nya_math::aabb get_aabb() { return m_mesh.get_mesh(0).get_aabb(); }
+
+    void set_damage(float value) { m_damage = value; }
+    float get_damage() const { return m_damage; }
+    void set_dead(bool dead);
+    bool is_dead() const { return m_dead; }
+
+    //aircraft animations
+    void set_elev(float left, float right); //elevons and tailerons
+    void set_rudder(float left, float right, float center);
+    void set_aileron(float left, float right);
+    void set_flaperon(float value);
+    void set_canard(float value);
+    void set_brake(float value);
+    void set_wing_sweep(float value);
+    void set_intake_ramp(float value);
+    void set_thrust(float value);
+    void set_special_bay(bool value);
+    void set_missile_bay(bool value);
+    void set_mgun_bay(bool value);
+    void set_mgun_fire(bool value) { m_fire_mgun = value; }
+    void set_mgp_fire(bool value) { m_fire_mgp = value; }
+
+    //weapons
+    bool has_special_bay();
+    bool is_special_bay_opened();
+    bool is_special_bay_closed();
+    bool is_missile_ready();
+    bool is_mgun_ready();
+    int get_missile_mount_count() { return (int)m_msls_mount.size(); }
+    nya_math::vec3 get_missile_mount_pos(int idx);
+    nya_math::quat get_missile_mount_rot(int idx);
+    void set_missile_visible(int idx, bool visible);
+    int get_special_mount_count() { return (int)m_special_mount.size(); }
+    nya_math::vec3 get_special_mount_pos(int idx);
+    nya_math::quat get_special_mount_rot(int idx);
+    void set_special_visible(int idx, bool visible);
+    int get_mguns_count() const;
+    nya_math::vec3 get_mgun_pos(int idx);
+
+    //weapon models
+    const renderer::model &get_missile_model();
+    const renderer::model &get_special_model();
+
+    //cockpit
+    void set_time(unsigned int time) { m_time = time * 1000; } //in seconds
+    void set_speed(float speed) { m_speed = speed; }
+    void set_aoa(float aoa) { m_aoa = aoa; }
+
+    //camera
+    enum camera_mode
+    {
+        camera_mode_third,
+        camera_mode_cockpit,
+        camera_mode_first,
+    };
+    camera_mode get_camera_mode() const { return m_camera_mode; }
+    void set_camera_mode(camera_mode mode) { m_camera_mode = mode; }
+    const nya_math::vec3 &get_camera_offset() const { return m_camera_offset; }
+
+    //info
+    static unsigned int get_colors_count(const char *plane_name);
+    static std::string get_color_name(const char *plane_name, int idx);
+    static std::string get_sound_name(const char *plane_name);
+    static std::string get_voice_name(const char *plane_name);
+    static net_decal get_net_decal(const char *plane_name, int idx);
+
+    aircraft(): m_hide(false), m_time(0), m_camera_mode(camera_mode_third), m_half_flaps_flag(false),
+                m_engine_lod_idx(0), m_dead(false), m_has_trail(false)
+    {
+        m_adimx_bone_idx = m_adimx2_bone_idx = -1;
+        m_adimz_bone_idx = m_adimz2_bone_idx = -1;
+        m_adimxz_bone_idx = m_adimxz2_bone_idx = -1;
+    }
+
+private:
+    std::string m_name;
+
+    float clamp(float value, float from, float to) { if (value < from) return from; if (value > to) return to; return value; }
+    float tend(float value, float target, float speed)
+    {
+        const float diff = target - value;
+        if (diff > speed) return value + speed;
+        if (-diff > speed) return value - speed;
+        return target;
+    }
+
+    model m_mesh;
+    bool m_hide;
+    params::fvalue m_damage;
+    params::fvalue m_speed;
+    params::fvalue m_aoa;
+
+    unsigned int m_time;
+
+    int m_adimx_bone_idx, m_adimx2_bone_idx;
+    int m_adimz_bone_idx, m_adimz2_bone_idx;
+    int m_adimxz_bone_idx, m_adimxz2_bone_idx;
+
+    bool m_half_flaps_flag;
+
+    int m_engine_lod_idx;
+
+    model m_missile;
+    model m_special;
+
+    struct wpn_mount
+    {
+        bool visible;
+        int bone_idx;
+    };
+
+    std::vector<wpn_mount> m_msls_mount;
+    std::vector<wpn_mount> m_special_mount;
+
+    nya_math::vec3 m_camera_offset;
+    camera_mode m_camera_mode;
+
+private:
+    fire_trail m_fire_trail;
+    bool m_dead;
+
+    bool m_has_trail;
+    std::pair<plane_trail, int> m_trails[2];
+
+    std::vector<std::pair<plane_engine, int> > m_engines;
+    float m_engine_thrust = 0.0f;
+    nya_math::vec2 m_tvc_param;
+
+    nya_math::vec3 m_vel;
+    float m_engine_rpm_n = 0.0f;
+
+private:
+    struct mgun
+    {
+        int bone_idx = -1;
+        muzzle_flash flash;
+    };
+
+    std::vector<mgun> m_mguns;
+    std::vector<mgun> m_mgps;
+    bool m_fire_mgun = false;
+    bool m_fire_mgp = false;
+
+    nya_math::vec3 m_wing_off;
+    nya_math::vec3 m_wing_sw_off;
+};
+
+//------------------------------------------------------------
+}

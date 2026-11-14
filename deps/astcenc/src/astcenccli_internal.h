@@ -1,0 +1,436 @@
+// SPDX-License-Identifier: Apache-2.0
+// ----------------------------------------------------------------------------
+// Copyright 2011-2026 Arm Limited
+//
+// Licensed under the Apache License, Version 2.0 (the "License"); you may not
+// use this file except in compliance with the License. You may obtain a copy
+// of the License at:
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+// WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+// License for the specific language governing permissions and limitations
+// under the License.
+// ----------------------------------------------------------------------------
+
+/**
+ * @brief Functions and data declarations.
+ */
+
+#if !defined(ASTCENCCLI_INTERNAL_INCLUDED)
+#define ASTCENCCLI_INTERNAL_INCLUDED
+
+#include <cstddef>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
+#include <memory>
+#include <vector>
+
+#include "astcenc.h"
+#include "astcenc_mathlib.h"
+
+/**
+ * @brief Mark a variable as unused.
+ */
+#define ASTCENC_UNUSED(x) ((void)x)
+
+/**
+ * @brief The payload stored in a compressed ASTC image.
+ */
+struct astc_compressed_image
+{
+	/** @brief The block width in texels. */
+	unsigned int block_x { 0 };
+
+	/** @brief The block height in texels. */
+	unsigned int block_y { 0 };
+
+	/** @brief The block depth in texels. */
+	unsigned int block_z { 0 };
+
+	/** @brief The image width in texels. */
+	size_t dim_x { 0 };
+
+	/** @brief The image height in texels. */
+	size_t dim_y { 0 };
+
+	/** @brief The image depth in texels. */
+	size_t dim_z { 0 };
+
+	/** @brief The binary data payload. */
+	std::vector<uint8_t> data;
+};
+
+/**
+ * @brief Config options that have been read from command line.
+ */
+struct cli_config_options
+{
+	/** @brief The number of threads to use for processing. */
+	unsigned int thread_count;
+
+	/** @brief The number of image slices to load for a 3D image. */
+	unsigned int array_size;
+
+	/** @brief @c true if running in silent mode with minimal output. */
+	bool silentmode;
+
+	/** @brief @c true if the images should be y-flipped. */
+	bool y_flip;
+
+#if defined(ASTCENC_DIAGNOSTICS)
+	/** @brief @c true if diagnostic images should be stored. */
+	bool diagnostic_images;
+#endif
+
+	/** @brief The low exposure fstop for error computation. */
+	int low_fstop;
+
+	/** @brief The high exposure fstop for error computation. */
+	int high_fstop;
+
+	/** @brief The  pre-encode swizzle. */
+	astcenc_swizzle swz_encode;
+
+	/** @brief The  post-decode swizzle. */
+	astcenc_swizzle swz_decode;
+
+	/** @brief The crop origin in input image texels. */
+	size_t crop_origin[3];
+
+	/** @brief The crop size in texels, or zero to use the remaining extent. */
+	size_t crop_size[3];
+
+	/** @brief The number of crop origin dimensions specified, or zero if omitted. */
+	unsigned int crop_origin_dims;
+
+	/** @brief The number of crop size dimensions specified, or zero if omitted. */
+	unsigned int crop_size_dims;
+
+	/** @brief Whether any crop option was specified. */
+	bool is_crop_requested;
+};
+
+/**
+ * @brief Print a string to stderr.
+ *
+ * @param format   The string to print.
+ */
+static inline void print_error(
+	const char* format
+) {
+	fprintf(stderr, "%s", format);
+}
+
+/**
+ * @brief Print a formatted string to stderr.
+ *
+ * @tparam _Args    The types of the format arguments.
+ *
+ * @param  format   The printf-style format string.
+ * @param  args     The values to format.
+ */
+template<typename ... _Args>
+static inline void print_error(
+	const char* format,
+	_Args...args
+) {
+	fprintf(stderr, format, args...);
+}
+
+/**
+ * @brief A custom deleter so we can use RAII to manage astcenc_image structs.
+ */
+struct astcenc_image_deleter
+{
+	void operator()(astcenc_image* img) const;
+};
+
+/**
+ * @brief A smart pointer wrapper around an astcenc_image.
+ */
+using astcenc_image_ptr = std::unique_ptr<astcenc_image, astcenc_image_deleter>;
+
+/**
+ * @brief Load uncompressed image.
+ *
+ * @param      filename          The file path on disk.
+ * @param      y_flip            Should this image be Y flipped?
+ * @param[out] is_hdr            Is the loaded image HDR?
+ * @param[out] component_count   The number of components in the loaded image.
+ *
+ * @return The loaded image, or @c nullptr on error.
+ */
+astcenc_image_ptr load_ncimage(
+	const char* filename,
+	bool y_flip,
+	bool& is_hdr,
+	unsigned int& component_count);
+
+/**
+ * @brief Load uncompressed PNG image.
+ *
+ * @param      filename          The file path on disk.
+ * @param      y_flip            Should this image be Y flipped?
+ * @param[out] is_hdr            Is the loaded image HDR?
+ * @param[out] component_count   The number of components in the loaded image.
+ *
+ * @return The loaded image, or @c nullptr on error.
+ */
+astcenc_image_ptr load_png_with_wuffs(
+	const char* filename,
+	bool y_flip,
+	bool& is_hdr,
+	unsigned int& component_count);
+
+/**
+ * @brief Save an uncompressed image.
+ *
+ * @param img        The source data for the image.
+ * @param filename   The name of the file to save.
+ * @param y_flip     Should the image be vertically flipped?
+ *
+ * @return @c true on error, @c false on success.
+ */
+bool store_ncimage(
+	const astcenc_image* img,
+	const char* filename,
+	int y_flip);
+
+/**
+ * @brief Check if the output file type requires a specific bitness.
+ *
+ * @param filename   The file name, containing the extension to check.
+ *
+ * @return Valid values are:
+ *     * -1 - error - unknown file type.
+ *     *  0 - no enforced bitness.
+ *     *  8 - enforced 8-bit UNORM.
+ *     * 16 - enforced 16-bit FP16.
+ */
+int get_output_filename_enforced_bitness(
+	const char* filename);
+
+/**
+ * @brief Allocate a new image in a canonical format.
+ *
+ * Allocated images are returned in a RAII-managed smart pointer.
+ *
+ * @param bitness   The number of bits per component (8, 16, or 32).
+ * @param dim_x     The width of the image, in texels.
+ * @param dim_y     The height of the image, in texels.
+ * @param dim_z     The depth of the image, in texels.
+ *
+ * @return The allocated image, or @c nullptr if the image memory size overflows.
+ */
+astcenc_image_ptr alloc_image(
+	unsigned int bitness,
+	size_t dim_x,
+	size_t dim_y,
+	size_t dim_z);
+
+/**
+ * @brief Determine the number of active components in an image.
+ *
+ * @param img   The image to analyze.
+ *
+ * @return The number of active components in the image.
+ */
+unsigned int determine_image_components(
+	const astcenc_image* img);
+
+/**
+ * @brief Load a compressed .astc image.
+ *
+ * @param      filename   The file to load.
+ * @param[out] img        The image to populate with loaded data.
+ *
+ * @return @c true on error, @c false on success.
+ */
+bool load_cimage(
+	const char* filename,
+	astc_compressed_image& img);
+
+/**
+ * @brief Store a compressed .astc image.
+ *
+ * @param img        The image to store.
+ * @param filename   The file to save.
+ *
+ * @return @c true on error, @c false on success.
+ */
+bool store_cimage(
+	const astc_compressed_image& img,
+	const char* filename);
+
+/**
+ * @brief Load a compressed .ktx image.
+ *
+ * @param      filename   The file to load.
+ * @param[out] is_srgb    Is this an sRGB encoded file?
+ * @param[out] img        The image to populate with loaded data.
+ *
+ * @return @c true on error, @c false on success.
+ */
+bool load_ktx_compressed_image(
+	const char* filename,
+	bool& is_srgb,
+	astc_compressed_image& img) ;
+
+/**
+ * @brief Store a compressed .ktx image.
+ *
+ * @param img        The image to store.
+ * @param filename   The file to store.
+ * @param is_srgb    Is this an sRGB encoded file?
+ *
+ * @return @c true on error, @c false on success.
+ */
+bool store_ktx_compressed_image(
+	const astc_compressed_image& img,
+	const char* filename,
+	bool is_srgb);
+
+/**
+ * @brief Create an image from a 2D float data array.
+ *
+ * @param data     The raw input data.
+ * @param dim_x    The width of the image, in texels.
+ * @param dim_y    The height of the image, in texels.
+ * @param y_flip   Should this image be vertically flipped?
+ *
+ * @return The populated image, or @c nullptr if the image memory size overflows.
+ */
+astcenc_image_ptr astc_img_from_floatx4_array(
+	const float* data,
+	size_t dim_x,
+	size_t dim_y,
+	bool y_flip);
+
+/**
+ * @brief Create an image from a 2D byte data array.
+ *
+ * @param data     The raw input data.
+ * @param dim_x    The width of the image, in texels.
+ * @param dim_y    The height of the image, in texels.
+ * @param y_flip   Should this image be vertically flipped?
+ *
+ * @return The populated image, or @c nullptr if the image memory size overflows.
+ */
+astcenc_image_ptr astc_img_from_unorm8x4_array(
+	const uint8_t* data,
+	size_t dim_x,
+	size_t dim_y,
+	bool y_flip);
+
+/**
+ * @brief Create a flattened RGBA FLOAT32 data array for a single slice from an image structure.
+ *
+ * @param img       The input image.
+ * @param y_flip    Should the data in the array be Y flipped?
+ * @param z_index   The slice index to convert.
+ *
+ * @return The data array.
+ */
+std::vector<float> floatx4_array_from_astc_img(
+	const astcenc_image* img,
+	bool y_flip,
+	size_t z_index);
+
+/* ============================================================================
+  Functions for printing build info and help messages
+============================================================================ */
+
+/**
+ * @brief Print the tool copyright and version header to stdout.
+ */
+void astcenc_print_header();
+
+/**
+ * @brief Print the tool copyright, version, and short-form help to stdout.
+ */
+void astcenc_print_shorthelp();
+
+/**
+ * @brief Print the tool copyright, version, and long-form help to stdout.
+ */
+void astcenc_print_longhelp();
+
+/**
+ * @brief Compute error metrics comparing two images.
+ *
+ * @param compute_hdr_metrics      True if HDR metrics should be computed.
+ * @param compute_normal_metrics   True if normal map metrics should be computed.
+ * @param input_components         The number of input color components.
+ * @param img1                     The original image.
+ * @param img2                     The compressed image.
+ * @param fstop_lo                 The low exposure fstop (HDR only).
+ * @param fstop_hi                 The high exposure fstop (HDR only).
+ */
+void compute_error_metrics(
+	bool compute_hdr_metrics,
+	bool compute_normal_metrics,
+	int input_components,
+	const astcenc_image* img1,
+	const astcenc_image* img2,
+	int fstop_lo,
+	int fstop_hi);
+
+/**
+ * @brief Get the current time.
+ *
+ * @return The current time in seconds since arbitrary epoch.
+ */
+double get_time();
+
+/**
+ * @brief Get the number of logical CPUs.
+ *
+ * @return The number of online or onlineable logical CPUs in the system.
+ */
+int get_cpu_count();
+
+/**
+ * @brief Launch N worker threads and wait for them to complete.
+ *
+ * All threads run the same thread function, and have the same thread payload, but are given a
+ * unique thread ID (0 .. N-1) as a parameter to the run function to allow thread-specific behavior.
+ *
+ * @param operation      The name of the operation for this async task.
+ * @param thread_count   The number of threads to spawn.
+ * @param func           The function to execute. Must have the signature:
+ *                       void (int thread_count, int thread_id, void* payload)
+ * @param payload        Pointer to an opaque thread payload object.
+ */
+void launch_threads(
+	const char* operation,
+	int thread_count,
+	void (*func)(int, int, void*),
+	void *payload);
+
+/**
+ * @brief Set the current thread name to a string value.
+ *
+ * For portability strings should be no longer than 16 characters.
+ *
+ * @param name   The thread name.
+ */
+void set_thread_name(
+	const char* name);
+
+/**
+ * @brief The main entry point.
+ *
+ * @param argc   The number of arguments.
+ * @param argv   The vector of arguments.
+ *
+ * @return 0 on success, non-zero otherwise.
+ */
+int astcenc_main(
+	int argc,
+	char **argv);
+
+#endif
