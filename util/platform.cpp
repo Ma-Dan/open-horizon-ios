@@ -318,10 +318,14 @@ bool platform::should_terminate()
 
 void platform::end_frame()
 {
+    //snapshot the key state before the early return: on iOS there is no
+    //GLFW window (events are delivered between frames by the run loop),
+    //but was_pressed() edge detection still needs the previous-read state
+    m_last_buttons = m_buttons;
+
     if (!m_window)
         return;
 
-    m_last_buttons = m_buttons;
     glfwPollEvents();
 
     debug_frame_hooks(m_frame_w, m_frame_h); //debug: dump framebuffer / auto-drive, no-op without env vars

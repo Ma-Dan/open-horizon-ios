@@ -503,7 +503,7 @@ static inline NSString *NSStringFromUIInterfaceOrientation(UIInterfaceOrientatio
 {
     if(is_background)
         return;
-    
+
     [(EAGLView *)self.view setFramebuffer];
 
     unsigned int dt=0;
@@ -520,6 +520,82 @@ static inline NSString *NSStringFromUIInterfaceOrientation(UIInterfaceOrientatio
         responder->on_frame(dt);
 
     [(EAGLView *)self.view presentFramebuffer];
+}
+
+//hardware keyboard (Bluetooth): presses are delivered to the first
+//responder; viewDidAppear makes this controller first responder so the
+//events arrive here (EAGLView doesn't override presses*, its UIKeyInput
+//conformance only serves the optional on-screen keyboard).
+//HID usages map onto the OH_KEY_* codes from util/platform.h
+//(GLFW-compatible values); unmapped keys are ignored.
+
+static inline unsigned int oh_key_from_hid(UIKeyboardHIDUsage usage)
+{
+    if(usage >= UIKeyboardHIDUsageKeyboardA && usage <= UIKeyboardHIDUsageKeyboardZ)
+        return 65 + (usage - UIKeyboardHIDUsageKeyboardA); //OH_KEY_A..Z
+
+    if(usage >= UIKeyboardHIDUsageKeyboard1 && usage <= UIKeyboardHIDUsageKeyboard9)
+        return 49 + (usage - UIKeyboardHIDUsageKeyboard1); //OH_KEY_1..9
+
+    switch(usage)
+    {
+        case UIKeyboardHIDUsageKeyboard0:             return 48;  //OH_KEY_0
+        case UIKeyboardHIDUsageKeyboardSpacebar:      return 32;  //OH_KEY_SPACE
+        case UIKeyboardHIDUsageKeyboardReturnOrEnter: return 257; //OH_KEY_ENTER
+        case UIKeyboardHIDUsageKeyboardEscape:        return 256; //OH_KEY_ESCAPE
+        case UIKeyboardHIDUsageKeyboardUpArrow:       return 265; //OH_KEY_UP
+        case UIKeyboardHIDUsageKeyboardDownArrow:     return 266; //OH_KEY_DOWN
+        case UIKeyboardHIDUsageKeyboardRightArrow:    return 267; //OH_KEY_RIGHT
+        case UIKeyboardHIDUsageKeyboardLeftArrow:     return 268; //OH_KEY_LEFT
+        case UIKeyboardHIDUsageKeyboardLeftControl:   return 343; //OH_KEY_LEFT_CONTROL
+        case UIKeyboardHIDUsageKeyboardLeftShift:     return 340; //OH_KEY_LEFT_SHIFT
+        default: return 0;
+    }
+}
+
+- (void)oh_deliverPresses:(NSSet<UIPress *> *)presses pressed:(BOOL)pressed
+{
+    nya_system::app *responder=shared_app::get_app().get_responder();
+    if(!responder)
+        return;
+
+    for(UIPress *press in presses)
+    {
+        if(!press.key)
+            continue;
+
+        const unsigned int key=oh_key_from_hid(press.key.keyCode);
+        if(key)
+            responder->on_keyboard(key, pressed);
+    }
+}
+
+- (void)pressesBegan:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event
+{
+    [self oh_deliverPresses:presses pressed:YES];
+}
+
+- (void)pressesEnded:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event
+{
+    [self oh_deliverPresses:presses pressed:NO];
+}
+
+- (void)pressesCancelled:(NSSet<UIPress *> *)presses withEvent:(UIPressesEvent *)event
+{
+    [self oh_deliverPresses:presses pressed:NO];
+}
+
+- (BOOL)canBecomeFirstResponder
+{
+    return YES;
+}
+
+- (void)viewDidAppear:(BOOL)animated
+{
+    [super viewDidAppear:animated];
+
+    //hardware keyboard events are delivered to the first responder only
+    [self becomeFirstResponder];
 }
 
 @end

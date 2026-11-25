@@ -637,10 +637,6 @@ public:
             exit(0);
         }
 
-        //refresh the edge-detect snapshot: touches since the previous frame
-        //become "current" for was_pressed()
-        m_platform.end_frame();
-
         //TEMP DEBUG: headless-simulator autopilot. No Simulator.app GUI on
         //this machine (slim Xcode install), so drive the real touch pipeline
         //programmatically: menu down x3 -> Free flight, MSL confirm through
@@ -798,6 +794,22 @@ public:
         controls.throttle = platform::ios_throttle();
         controls.brake = platform::ios_brake() ? 1.0f : 0.0f;
 
+        //hardware (Bluetooth) keyboard, merged on top of the touch controls
+        //(same mapping as the desktop build): W/S throttle and A/D rudder
+        //are unconditional; the digital stick axes only engage while the
+        //touch stick is centered, so a stray touch can't fight the arrows
+        if (m_platform.get_key(OH_KEY_W)) controls.throttle = 1.0f;
+        if (m_platform.get_key(OH_KEY_S)) controls.brake = 1.0f;
+        if (m_platform.get_key(OH_KEY_A)) controls.rot.y = -1.0f;
+        if (m_platform.get_key(OH_KEY_D)) controls.rot.y = 1.0f;
+        if (fabsf(platform::ios_stick_x()) < 0.01f && fabsf(platform::ios_stick_y()) < 0.01f)
+        {
+            if (m_platform.get_key(OH_KEY_UP)) controls.rot.x = 1.0f;
+            if (m_platform.get_key(OH_KEY_DOWN)) controls.rot.x = -1.0f;
+            if (m_platform.get_key(OH_KEY_LEFT)) controls.rot.z = -1.0f;
+            if (m_platform.get_key(OH_KEY_RIGHT)) controls.rot.z = 1.0f;
+        }
+
         //buttons (synthetic GLFW keys set by the touch zones in platform_ios)
         if (m_platform.get_key(OH_KEY_SPACE))
             controls.missile = true, menu_controls.next = true;
@@ -824,6 +836,10 @@ public:
             menu_controls.right = true;
         if (m_platform.get_key(OH_KEY_ENTER))
             menu_controls.next = true;
+        //ESC / touch BACK: menu back one screen. The menu edge-detects
+        //internally (m_prev_controls), so a held key pops a single screen
+        if (m_platform.get_key(OH_KEY_ESCAPE))
+            menu_controls.prev = true;
         } //end !gamepad_active
 
         //mirror of the desktop "platform thread" handoff
@@ -836,10 +852,22 @@ public:
             m_gt->frame_pending = false;
 
             m_render->execute();
-
-            if (m_platform.was_pressed(OH_KEY_ESCAPE))
-                menu_controls.prev = true, m_gt->exit = true;
         }
+
+        //edge-detected keys, read once per display frame outside the
+        //frame_pending gate so edges aren't dropped when the game thread
+        //skips a handoff. iOS input events arrive between frames, so the
+        //edges must compare against the PREVIOUS frame's snapshot — read
+        //them BEFORE end_frame() advances it (desktop polls inside
+        //end_frame, after the snapshot; here the "poll" is the run loop
+        //between frames, so the order is inverted)
+        if (m_platform.was_pressed(OH_KEY_P))
+            m_gt->paused = !m_gt->paused;
+        if (m_platform.was_pressed(OH_KEY_ESCAPE))
+            m_gt->exit = true;
+
+        //advance the was_pressed snapshot after the edge reads
+        m_platform.end_frame();
 
         m_gt->platform_width = m_platform.get_frame_width();
         m_gt->platform_height = m_platform.get_frame_height();
@@ -862,6 +890,14 @@ public:
     void on_touch(int x, int y, unsigned int touch_idx, bool pressed) override
     {
         platform::ios_touch(x, y, touch_idx, pressed);
+    }
+
+    //hardware (Bluetooth) keyboard via app.mm presses* — feeds the same
+    //synthetic-key map the touch zones use
+    void on_keyboard(unsigned int key, bool pressed) override
+    {
+        if (key)
+            platform::debug_buttons()[(int)key] = pressed;
     }
 
 private:
